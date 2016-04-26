@@ -1,2 +1,3 @@
 # Devstack
-Self devstack config
+Self devstack config file:
+local.conf
