@@ -1,0 +1,1147 @@
+<!DOCTYPE html>
+
+
+
+  
+
+
+<html class="theme-next mist use-motion" lang="zh-Hans">
+<head>
+  <meta charset="UTF-8"/>
+<meta http-equiv="X-UA-Compatible" content="IE=edge" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"/>
+<meta name="theme-color" content="#222">
+
+
+
+
+
+
+
+
+
+<meta http-equiv="Cache-Control" content="no-transform" />
+<meta http-equiv="Cache-Control" content="no-siteapp" />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+  
+  <link href="/lib/fancybox/source/jquery.fancybox.css?v=2.1.5" rel="stylesheet" type="text/css" />
+
+
+
+
+  
+  
+  
+  
+
+  
+    
+    
+  
+
+  
+
+  
+
+  
+
+  
+
+  
+    
+    
+    <link href="//fonts.googleapis.com/css?family=Lato:300,300italic,400,400italic,700,700italic&subset=latin,latin-ext" rel="stylesheet" type="text/css">
+  
+
+
+
+
+
+
+<link href="/lib/font-awesome/css/font-awesome.min.css?v=4.6.2" rel="stylesheet" type="text/css" />
+
+<link href="/css/main.css?v=5.1.2" rel="stylesheet" type="text/css" />
+
+
+  <meta name="keywords" content="OpenStack,Keystone," />
+
+
+
+
+
+
+
+
+  <link rel="shortcut icon" type="image/x-icon" href="/favicon.ico?v=5.1.2" />
+
+
+
+
+
+
+<meta name="description" content="Keystone作为OpenStack的入口服务，它的性能极大地影响着整套OpenStack环境的体验。而在用户使用过程中，与Keystone打交道最多的地方在于获取token，以及校验token。并且往往伴随着高并发的问题。 如何提高Keystone的性能成为目前Keystone开发者最关注的问题之一。那么，在“申请Token“与”校验Token“这两个最常用、最重要的流程中，我们该如何优化？其">
+<meta name="keywords" content="OpenStack,Keystone">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Keystone的cache机制">
+<meta property="og:url" content="http://www.wangxiyuan.top/2017/10/19/keystone-cache/index.html">
+<meta property="og:site_name" content="风悦心幽时">
+<meta property="og:description" content="Keystone作为OpenStack的入口服务，它的性能极大地影响着整套OpenStack环境的体验。而在用户使用过程中，与Keystone打交道最多的地方在于获取token，以及校验token。并且往往伴随着高并发的问题。 如何提高Keystone的性能成为目前Keystone开发者最关注的问题之一。那么，在“申请Token“与”校验Token“这两个最常用、最重要的流程中，我们该如何优化？其">
+<meta property="og:locale" content="zh-Hans">
+<meta property="og:updated_time" content="2017-11-08T15:05:25.649Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Keystone的cache机制">
+<meta name="twitter:description" content="Keystone作为OpenStack的入口服务，它的性能极大地影响着整套OpenStack环境的体验。而在用户使用过程中，与Keystone打交道最多的地方在于获取token，以及校验token。并且往往伴随着高并发的问题。 如何提高Keystone的性能成为目前Keystone开发者最关注的问题之一。那么，在“申请Token“与”校验Token“这两个最常用、最重要的流程中，我们该如何优化？其">
+
+
+
+<script type="text/javascript" id="hexo.configurations">
+  var NexT = window.NexT || {};
+  var CONFIG = {
+    root: '/',
+    scheme: 'Mist',
+    sidebar: {"position":"left","display":"post","offset":12,"offset_float":12,"b2t":false,"scrollpercent":false,"onmobile":false},
+    fancybox: true,
+    tabs: true,
+    motion: true,
+    duoshuo: {
+      userId: '0',
+      author: '博主'
+    },
+    algolia: {
+      applicationID: '',
+      apiKey: '',
+      indexName: '',
+      hits: {"per_page":10},
+      labels: {"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}
+    }
+  };
+</script>
+
+
+
+  <link rel="canonical" href="http://www.wangxiyuan.top/2017/10/19/keystone-cache/"/>
+
+
+
+
+
+  <title>Keystone的cache机制 | 风悦心幽时</title>
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage" lang="zh-Hans">
+
+  
+  
+    
+  
+
+  <div class="container sidebar-position-left page-post-detail ">
+    <div class="headband"></div>
+
+    <header id="header" class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-wrapper">
+  <div class="site-meta ">
+    
+
+    <div class="custom-logo-site-title">
+      <a href="/"  class="brand" rel="start">
+        <span class="logo-line-before"><i></i></span>
+        <span class="site-title">风悦心幽时</span>
+        <span class="logo-line-after"><i></i></span>
+      </a>
+    </div>
+      
+        <p class="site-subtitle"></p>
+      
+  </div>
+
+  <div class="site-nav-toggle">
+    <button>
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+    </button>
+  </div>
+</div>
+
+<nav class="site-nav">
+  
+
+  
+    <ul id="menu" class="menu">
+      
+        
+        <li class="menu-item menu-item-home">
+          <a href="/" rel="section">
+            
+              <i class="menu-item-icon fa fa-fw fa-home"></i> <br />
+            
+            首页
+          </a>
+        </li>
+      
+        
+        <li class="menu-item menu-item-categories">
+          <a href="/categories/" rel="section">
+            
+              <i class="menu-item-icon fa fa-fw fa-th"></i> <br />
+            
+            分类
+          </a>
+        </li>
+      
+        
+        <li class="menu-item menu-item-about">
+          <a href="/about/" rel="section">
+            
+              <i class="menu-item-icon fa fa-fw fa-user"></i> <br />
+            
+            关于
+          </a>
+        </li>
+      
+        
+        <li class="menu-item menu-item-archives">
+          <a href="/archives/" rel="section">
+            
+              <i class="menu-item-icon fa fa-fw fa-archive"></i> <br />
+            
+            归档
+          </a>
+        </li>
+      
+        
+        <li class="menu-item menu-item-tags">
+          <a href="/tags/" rel="section">
+            
+              <i class="menu-item-icon fa fa-fw fa-tags"></i> <br />
+            
+            标签
+          </a>
+        </li>
+      
+
+      
+    </ul>
+  
+
+  
+</nav>
+
+
+
+ </div>
+    </header>
+
+    <main id="main" class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          <div id="content" class="content">
+            
+
+  <div id="posts" class="posts-expand">
+    
+
+  
+
+  
+  
+  
+
+  <article class="post post-type-normal" itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block">
+    <link itemprop="mainEntityOfPage" href="http://www.wangxiyuan.top/2017/10/19/keystone-cache/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="wxy">
+      <meta itemprop="description" content="">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="风悦心幽时">
+    </span>
+
+    
+      <header class="post-header">
+
+        
+        
+          <h1 class="post-title" itemprop="name headline">Keystone的cache机制</h1>
+        
+
+        <div class="post-meta">
+          <span class="post-time">
+            
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              
+                <span class="post-meta-item-text">发表于</span>
+              
+              <time title="创建于" itemprop="dateCreated datePublished" datetime="2017-10-19T18:58:59+08:00">
+                2017-10-19
+              </time>
+            
+
+            
+
+            
+          </span>
+
+          
+            <span class="post-category" >
+            
+              <span class="post-meta-divider">|</span>
+            
+              <span class="post-meta-item-icon">
+                <i class="fa fa-folder-o"></i>
+              </span>
+              
+                <span class="post-meta-item-text">分类于</span>
+              
+              
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/OpenStack/" itemprop="url" rel="index">
+                    <span itemprop="name">OpenStack</span>
+                  </a>
+                </span>
+
+                
+                
+              
+            </span>
+          
+
+          
+            
+              <span class="post-comments-count">
+                <span class="post-meta-divider">|</span>
+                <span class="post-meta-item-icon">
+                  <i class="fa fa-comment-o"></i>
+                </span>
+                <a href="/2017/10/19/keystone-cache/#comments" itemprop="discussionUrl">
+                  <span class="post-comments-count disqus-comment-count"
+                        data-disqus-identifier="2017/10/19/keystone-cache/" itemprop="commentCount"></span>
+                </a>
+              </span>
+            
+          
+
+          
+          
+             <span id="/2017/10/19/keystone-cache/" class="leancloud_visitors" data-flag-title="Keystone的cache机制">
+               <span class="post-meta-divider">|</span>
+               <span class="post-meta-item-icon">
+                 <i class="fa fa-eye"></i>
+               </span>
+               
+                 <span class="post-meta-item-text">阅读次数 </span>
+               
+                 <span class="leancloud-visitors-count"></span>
+             </span>
+          
+
+          
+
+          
+            <div class="post-wordcount">
+              
+                
+                <span class="post-meta-item-icon">
+                  <i class="fa fa-file-word-o"></i>
+                </span>
+                
+                  <span class="post-meta-item-text">字数统计</span>
+                
+                <span title="字数统计">
+                  2,143
+                </span>
+              
+
+              
+                <span class="post-meta-divider">|</span>
+              
+
+              
+                <span class="post-meta-item-icon">
+                  <i class="fa fa-clock-o"></i>
+                </span>
+                
+                  <span class="post-meta-item-text">阅读时长</span>
+                
+                <span title="阅读时长">
+                  8
+                </span>
+              
+            </div>
+          
+
+          
+
+        </div>
+      </header>
+    
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+      
+
+      
+        <p>Keystone作为OpenStack的入口服务，它的性能极大地影响着整套OpenStack环境的体验。而在用户使用过程中，与Keystone打交道最多的地方在于获取token，以及校验token。并且往往伴随着高并发的问题。</p>
+<p>如何提高Keystone的性能成为目前Keystone开发者最关注的问题之一。那么，在“申请Token“与”校验Token“这两个最常用、最重要的流程中，我们该如何优化？其实可以做的事情有很多，包括：部署Haproxy来分流API请求、使用非持久化存储的Fernet类型token来减少DB交互、使用缓存机制避免多次API请求或者程序运算等等。首先我们先从Keystone的缓存机制开始讲起。<br><a id="more"></a></p>
+<h1 id="机制说明"><a href="#机制说明" class="headerlink" title="机制说明"></a>机制说明</h1><h2 id="Keystonemiddleware的缓存机制"><a href="#Keystonemiddleware的缓存机制" class="headerlink" title="Keystonemiddleware的缓存机制"></a>Keystonemiddleware的缓存机制</h2><p>Keystonemiddleware被集成在各个服务中。各服务通过Keystonemiddleware与Keystone交互，对用户携带的Token进行有效性校验。在没有缓存的场景下，服务每接收到一个Token，都会通过Keystonemiddleware访问Keystone（PKI Token除外）校验Token。因此在多服务并行、用户请求频繁的场景下，Keystone会接受海量的Token校验请求，成为整个流程的性能瓶颈所在。Keystonemiddleware中的Token的缓存机制可以有效的解决该问题，即把已校验的Token缓存在各服务本地，当服务再次接收到相同的Token时，不再需要去Keystone校验，直接在本地缓存中校验即可。这样就减少了与Keystone交互的次数，提高了性能。</p>
+<p>那么这些数据具体缓存在哪里？Keystonemiddleware提供了两种缓存后端：</p>
+<ol>
+<li>缓存在服务本身的内容中。（以下简称IC（Inside Cache））<br>Keystonemiddleware默认采用这种方法，所有被服务校验过的Token都会被缓存到本服务内存中，当服务再次接收到相同的Token时，先在本服务内存中查找是否包含该Token，如果有，则直接在本地校验。Token的默认缓存时长是600秒（可配置），即每个Token会在内存中缓存5分钟。</li>
+<li>缓存在第三方存储后端中，如被广泛使用的memcached。（以下简称OC（Outside Cache））<br>校验原理与第一种类似，只是存储的位置不同，不再放在每个服务内。而是使用外围的缓存系统。</li>
+</ol>
+<p>需要注意的是，Keytonemiddleware的缓存机制同样引出了一些其他的问题：如，缓存数据与Keystone本身存储的数据不一致的问题。假如一个有效Token被服务成功缓存后，管理员在Keystone中对该Token进行了Revoke操作（删除该Token，使之失效），或者修改了该Token的权限（如把Role从admin改到member），而这个操作各服务并不感知。因此当用户带着这个已经失效/降级的Token再次访问服务时，服务在Cache中校验通过，认为依旧有效/有权限。这就产生了Token不一致并且不可接受的结果。</p>
+<p>那么如何避免这个问题? 如果使用IC方式的话，该问题无法避免，因为缓存数据存储在各服务的运行内存的堆栈中，其他进程无法直接修改。可能的解决方法有两种：</p>
+<ol>
+<li>各服务暴露修改Cache的API。<br>不可行：代价太大，并且需要Keysonte频繁主动地调用，严重影响性能。</li>
+<li>使用Hack方法，跨进程访问内存。<br>不可行：违反程序设计原理，并且在容器化场景下（资源隔离）无法使用。</li>
+</ol>
+<p>因此，不建议在生产环境中使用IC方法（PKI Token除外，因为在PKI场景下，Keystonemiddleware会主动的周期性访问Keystone，刷新IC）。并且OpenStack社区在一年前也废弃了IC。</p>
+<p>而使用OC方式，则可以避免该问题，具体方法在下一节（Keystone本身的缓存机制）中讲述。</p>
+<h2 id="Keystone本身的缓存机制"><a href="#Keystone本身的缓存机制" class="headerlink" title="Keystone本身的缓存机制"></a>Keystone本身的缓存机制</h2><p>Keystone本身的缓存对象有很多，不仅仅限于Token，还包括Catalog、Assignments(Role)、Revoke、Id_mapping(Federation)、Domain_config和Resource（Domain and Project）等。Keystone使用Oslo.cache库实现缓存功能（其他有Cache功能的服务基本也是这样）。而Oslo.cache本身使用Dogpile.cache库实现。因此，OpenStack中各服务的缓存能力要依靠Dogpile.cache。Dogpile.cache是一个python库，以plugin的方式向下支持多种缓存后端，向上提供统一的缓存API。目前支持的后端有：</p>
+<ul>
+<li>dogpile.cache.memcached<br>使用python-memcached库的memcached后端。</li>
+<li>dogpile.cache.pylibmc<br>使用pylibmc库的memcached后端。</li>
+<li>dogpile.cache.bmemcached<br>使用python-binary-memcached库的memcached后端。</li>
+<li>dogpile.cache.redis<br>Redis后端。</li>
+<li>dogpile.cache.dbm<br>本地DBM文件后端。</li>
+<li>dogpile.cache.memory<br>与Keystonemiddleware IC一样的内存后端。</li>
+<li>oslo_cache.mongo<br>MongoDB后端。</li>
+<li>oslo_cache.memcache_pool<br>memcached后端，但经过oslo_cache优化，建议连接数大于100时使用。</li>
+<li>oslo_cahce.dict<br>与Keystonemiddleware IC一样的内存后端，但使用字典存储。</li>
+<li>oslo_cache.etcd3gw<br>etcd3.X后端。</li>
+</ul>
+<p>关系图如下所示：</p>
+<div id="flowchart-0" class="flow-chart"></div>
+
+<p>以Token为例，Keystone会把认证过的有效的Token缓存到Cache当中，当下次同样的Token进来时，直接从缓存中读取，提高了Token校验的性能。当Token被revoke或者Token信息变动时，Keystone会实时刷新缓存数据，使之与实际数据保持一致。基于此，当使用非memory（IC）的后端时，Keystone与各服务缓存数据不一致的问题就可以通过以下方法有效的解决：</p>
+<ol>
+<li>Keystone和各服务使用同一缓存系统。<br>这样的架构下，Keystone来保证缓存系统中数据的一致性。各服务从keystonemiddleware拿到相同的缓存数据。</li>
+<li>Keystone和各服务使用不同的缓存系统，使用外围工具保证各缓存系统之间数据的同步。<br>这样的架构下，外围工具周期性同步缓存数据，保证数据的一致性。但会有一定的延时。</li>
+</ol>
+<h1 id="如何使用"><a href="#如何使用" class="headerlink" title="如何使用"></a>如何使用</h1><h2 id="Keystonemiddleware的配置与使用"><a href="#Keystonemiddleware的配置与使用" class="headerlink" title="Keystonemiddleware的配置与使用"></a>Keystonemiddleware的配置与使用</h2><p>Keytonmiddleware默认就已经开启了cache功能（无法关闭），并且默认使用IC。因此在生产环境中，想要使用OC，则至少需要配置<code>memcached_servers</code>配置项。<br>目前相关的配置项如下所示：</p>
+<pre><code>注意：Swift与Keystonemiddleware集成时，配置方法较为特殊，本文暂不涉及。
+</code></pre><table>
+<thead>
+<tr>
+<th>配置项</th>
+<th>默认值</th>
+<th>备注</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>memcached_servers</td>
+<td>None</td>
+<td>OC链接url，e.g.localhost:11211</td>
+</tr>
+<tr>
+<td>token_cache_time</td>
+<td>300（s）</td>
+<td>Token缓存时长</td>
+</tr>
+<tr>
+<td>memcache_security_strategy</td>
+<td>None</td>
+<td>Token缓存数据的加密策略。可选项：None、MAC、ENCRYPT</td>
+</tr>
+<tr>
+<td>memcache_secret_key</td>
+<td>None</td>
+<td>Token缓存数据的加密Key</td>
+</tr>
+<tr>
+<td>memcache_pool_maxsize</td>
+<td>10</td>
+<td>可连接的socket的最大个数</td>
+</tr>
+<tr>
+<td>memcache_pool_dead_retry</td>
+<td>300（s）</td>
+<td>Socket中断后，重连的等待时长</td>
+</tr>
+<tr>
+<td>memcache_pool_socket_timeout</td>
+<td>3（s）</td>
+<td>Socket超时时间</td>
+</tr>
+<tr>
+<td>memcache_pool_unused_timeout</td>
+<td>60（s）</td>
+<td>关闭未使用的Socket前的等待时长</td>
+</tr>
+<tr>
+<td>memcache_pool_conn_get_timeout</td>
+<td>10（s）</td>
+<td>Socket连接的客户端等待时长</td>
+</tr>
+<tr>
+<td>memcache_use_advanced_pool</td>
+<td>False</td>
+<td>是否使用advanced的方式，只在python2.X中适用</td>
+</tr>
+</tbody>
+</table>
+<h2 id="Keystone的配置与使用"><a href="#Keystone的配置与使用" class="headerlink" title="Keystone的配置与使用"></a>Keystone的配置与使用</h2><p>上面讲到Keystone支持多种资源的缓存，因此Keystone同时也支持分别开启或关闭各个资源的缓存。默认情况下，各个资源的缓存开关已打开，但总缓存开关未打开。即Keystone默认未开启缓存功能。配置项如下：</p>
+<blockquote>
+<p>[cache]<br>enabled = false<br>[token]<br>caching = true<br>[revoke]<br>caching = true<br>…</p>
+</blockquote>
+<p>因此只需要配置[cache]里面的值即可。例如：</p>
+<blockquote>
+<p>  [cache]<br>  enabled = true<br>  backend = dogpile.cache.memcached<br>  backend_argument = url:127.0.0.1:11211</p>
+</blockquote>
+<p>所有相关配置项如下。</p>
+<table>
+<thead>
+<tr>
+<th>配置项</th>
+<th>默认值</th>
+<th>备注</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>config_prefix</td>
+<td>cache.oslo</td>
+<td>backend的前缀，一般不需要修改</td>
+</tr>
+<tr>
+<td>expiration_time</td>
+<td>600（s）</td>
+<td>资源的缓存时长</td>
+</tr>
+<tr>
+<td>backend</td>
+<td>dogpile.cache.null</td>
+<td>backend的类型，在上文中已有详细说明</td>
+</tr>
+<tr>
+<td>backend_argument</td>
+<td>[]</td>
+<td>缓存后端需要用到的参数，用：分隔</td>
+</tr>
+<tr>
+<td>proxies</td>
+<td>[]</td>
+<td>dogpile的proxy机制，暂不细说</td>
+</tr>
+<tr>
+<td>enabled</td>
+<td>False</td>
+<td>是否开启缓存功能</td>
+</tr>
+<tr>
+<td>debug_cache_backend</td>
+<td>False</td>
+<td>是否开启debug日志</td>
+</tr>
+<tr>
+<td>memcache_servers</td>
+<td>60（s）</td>
+<td>关闭未使用的Socket前的等待时长</td>
+</tr>
+<tr>
+<td>memcache_pool_maxsize</td>
+<td>10</td>
+<td>可连接的socket的最大个数</td>
+</tr>
+<tr>
+<td>memcache_dead_retry</td>
+<td>300（s）</td>
+<td>Socket中断后，重连的等待时长</td>
+</tr>
+<tr>
+<td>memcache_socket_timeout</td>
+<td>3（s）</td>
+<td>Socket超时时间</td>
+</tr>
+<tr>
+<td>memcache_pool_unused_timeout</td>
+<td>60（s）</td>
+<td>关闭未使用的Socket前的等待时长</td>
+</tr>
+<tr>
+<td>memcache_pool_connection_get_timeout</td>
+<td>10（s）</td>
+<td>Socket连接的客户端等待时长</td>
+</tr>
+</tbody>
+</table>
+<h1 id="总结"><a href="#总结" class="headerlink" title="总结"></a>总结</h1><p>从减少API交互次数的角度来看，在Keystone和各服务中使用cache功能可以很大程度的提高OpenStack整体的性能，但什么使用场景使用什么后端？这还需要用户自己不断摸索与实践。最后送给大家一个官方的推荐：</p>
+<blockquote>
+<p>For eventlet-based or environments with hundreds of threaded servers, Memcache with pooling (oslo_cache.memcache_pool) is recommended. For environments with less than 100 threaded servers, Memcached (dogpile.cache.memcached) or Redis (dogpile.cache.redis) is recommended. Test environments with a single instance of the server can use the dogpile.cache.memory backend.</p>
+<p><script src="https://cdnjs.cloudflare.com/ajax/libs/raphael/2.2.7/raphael.min.js"></script><script src="https://cdnjs.cloudflare.com/ajax/libs/flowchart/1.6.5/flowchart.min.js"></script><textarea id="flowchart-0-code" style="display: none">st=>start: Cache backend
+op1=>operation: Dogpile.cache
+op2=>operation: Oslo.cache
+e=>end: Keystone
+
+st(right)->op1(right)->op2(right)->e</textarea><textarea id="flowchart-0-options" style="display: none">{"scale":1,"line-width":2,"line-length":50,"text-margin":10,"font-size":12}</textarea><script>  var code = document.getElementById("flowchart-0-code").value;  var options = JSON.parse(decodeURIComponent(document.getElementById("flowchart-0-options").value));  var diagram = flowchart.parse(code);  diagram.drawSVG("flowchart-0", options);</script></p>
+</blockquote>
+
+      
+    </div>
+    
+    
+    
+
+    
+
+    
+
+    
+
+    <footer class="post-footer">
+      
+        <div class="post-tags">
+          
+            <a href="/tags/OpenStack/" rel="tag"># OpenStack</a>
+          
+            <a href="/tags/Keystone/" rel="tag"># Keystone</a>
+          
+        </div>
+      
+
+      
+      
+      
+
+      
+        <div class="post-nav">
+          <div class="post-nav-next post-nav-item">
+            
+              <a href="/2017/09/07/glance4/" rel="next" title="OpenStack Glance-创建镜像V2">
+                <i class="fa fa-chevron-left"></i> OpenStack Glance-创建镜像V2
+              </a>
+            
+          </div>
+
+          <span class="post-nav-divider"></span>
+
+          <div class="post-nav-prev post-nav-item">
+            
+              <a href="/2017/10/24/keystone-quota/" rel="prev" title="CERN的多层级quota模型(译)">
+                CERN的多层级quota模型(译) <i class="fa fa-chevron-right"></i>
+              </a>
+            
+          </div>
+        </div>
+      
+
+      
+      
+    </footer>
+  </div>
+  
+  
+  
+  </article>
+
+
+
+    <div class="post-spread">
+      
+    </div>
+  </div>
+
+
+          </div>
+          
+
+
+          
+  <div class="comments" id="comments">
+    
+      <div id="disqus_thread">
+        <noscript>
+          Please enable JavaScript to view the
+          <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a>
+        </noscript>
+      </div>
+    
+  </div>
+
+
+        </div>
+        
+          
+  
+  <div class="sidebar-toggle">
+    <div class="sidebar-toggle-line-wrap">
+      <span class="sidebar-toggle-line sidebar-toggle-line-first"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-middle"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-last"></span>
+    </div>
+  </div>
+
+  <aside id="sidebar" class="sidebar">
+    
+    <div class="sidebar-inner">
+
+      
+
+      
+        <ul class="sidebar-nav motion-element">
+          <li class="sidebar-nav-toc sidebar-nav-active" data-target="post-toc-wrap" >
+            文章目录
+          </li>
+          <li class="sidebar-nav-overview" data-target="site-overview">
+            站点概览
+          </li>
+        </ul>
+      
+
+      <section class="site-overview sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+          <img class="site-author-image" itemprop="image"
+               src="/images/avatar.gif"
+               alt="wxy" />
+          <p class="site-author-name" itemprop="name">wxy</p>
+           
+              <p class="site-description motion-element" itemprop="description">我是人间惆怅客，知君何事泪纵横，断肠声里忆平生。</p>
+          
+        </div>
+        <nav class="site-state motion-element">
+
+          
+            <div class="site-state-item site-state-posts">
+              <a href="/archives/">
+                <span class="site-state-item-count">11</span>
+                <span class="site-state-item-name">日志</span>
+              </a>
+            </div>
+          
+
+          
+            
+            
+            <div class="site-state-item site-state-categories">
+              <a href="/categories/index.html">
+                <span class="site-state-item-count">2</span>
+                <span class="site-state-item-name">分类</span>
+              </a>
+            </div>
+          
+
+          
+            
+            
+            <div class="site-state-item site-state-tags">
+              <a href="/tags/index.html">
+                <span class="site-state-item-count">3</span>
+                <span class="site-state-item-name">标签</span>
+              </a>
+            </div>
+          
+
+        </nav>
+
+        
+
+        <div class="links-of-author motion-element">
+          
+            
+              <span class="links-of-author-item">
+                <a href="https://github.com/wangxiyuan1" target="_blank" title="Github">
+                  
+                    <i class="fa fa-fw fa-globe"></i>
+                  
+                    
+                      Github
+                    
+                </a>
+              </span>
+            
+              <span class="links-of-author-item">
+                <a href="mailto:wangxiyuan1007@gmail.com" target="_blank" title="E-Mail">
+                  
+                    <i class="fa fa-fw fa-envelope"></i>
+                  
+                    
+                      E-Mail
+                    
+                </a>
+              </span>
+            
+              <span class="links-of-author-item">
+                <a href="http://weibo.com/windwhite?from=profile&wvr=6" target="_blank" title="Weibo">
+                  
+                    <i class="fa fa-fw fa-weibo"></i>
+                  
+                    
+                      Weibo
+                    
+                </a>
+              </span>
+            
+          
+        </div>
+
+        
+        
+
+        
+        
+
+        
+
+
+      </section>
+
+      
+      <!--noindex-->
+        <section class="post-toc-wrap motion-element sidebar-panel sidebar-panel-active">
+          <div class="post-toc">
+
+            
+              
+            
+
+            
+              <div class="post-toc-content"><ol class="nav"><li class="nav-item nav-level-1"><a class="nav-link" href="#机制说明"><span class="nav-text">机制说明</span></a><ol class="nav-child"><li class="nav-item nav-level-2"><a class="nav-link" href="#Keystonemiddleware的缓存机制"><span class="nav-text">Keystonemiddleware的缓存机制</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#Keystone本身的缓存机制"><span class="nav-text">Keystone本身的缓存机制</span></a></li></ol></li><li class="nav-item nav-level-1"><a class="nav-link" href="#如何使用"><span class="nav-text">如何使用</span></a><ol class="nav-child"><li class="nav-item nav-level-2"><a class="nav-link" href="#Keystonemiddleware的配置与使用"><span class="nav-text">Keystonemiddleware的配置与使用</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#Keystone的配置与使用"><span class="nav-text">Keystone的配置与使用</span></a></li></ol></li><li class="nav-item nav-level-1"><a class="nav-link" href="#总结"><span class="nav-text">总结</span></a></li></ol></div>
+            
+
+          </div>
+        </section>
+      <!--/noindex-->
+      
+
+      
+
+    </div>
+  </aside>
+
+
+        
+      </div>
+    </main>
+
+    <footer id="footer" class="footer">
+      <div class="footer-inner">
+        <div class="copyright" >
+  
+  &copy;  2017 - 
+  <span itemprop="copyrightYear">2018</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">wxy</span>
+</div>
+
+
+
+        
+
+        
+      </div>
+    </footer>
+
+    
+      <div class="back-to-top">
+        <i class="fa fa-arrow-up"></i>
+        
+      </div>
+    
+
+  </div>
+
+  
+
+<script type="text/javascript">
+  if (Object.prototype.toString.call(window.Promise) !== '[object Function]') {
+    window.Promise = null;
+  }
+</script>
+
+
+
+
+
+
+
+
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+  
+  <script type="text/javascript" src="/lib/jquery/index.js?v=2.1.3"></script>
+
+  
+  <script type="text/javascript" src="/lib/fastclick/lib/fastclick.min.js?v=1.0.6"></script>
+
+  
+  <script type="text/javascript" src="/lib/jquery_lazyload/jquery.lazyload.js?v=1.9.7"></script>
+
+  
+  <script type="text/javascript" src="/lib/velocity/velocity.min.js?v=1.2.1"></script>
+
+  
+  <script type="text/javascript" src="/lib/velocity/velocity.ui.min.js?v=1.2.1"></script>
+
+  
+  <script type="text/javascript" src="/lib/fancybox/source/jquery.fancybox.pack.js?v=2.1.5"></script>
+
+
+  
+
+
+  <script type="text/javascript" src="/js/src/utils.js?v=5.1.2"></script>
+
+  <script type="text/javascript" src="/js/src/motion.js?v=5.1.2"></script>
+
+
+
+  
+  
+
+  
+  <script type="text/javascript" src="/js/src/scrollspy.js?v=5.1.2"></script>
+<script type="text/javascript" src="/js/src/post-details.js?v=5.1.2"></script>
+
+
+
+  
+
+
+  <script type="text/javascript" src="/js/src/bootstrap.js?v=5.1.2"></script>
+
+
+
+  
+
+
+  
+
+    
+      <script id="dsq-count-scr" src="https://wangxiyuan.disqus.com.disqus.com/count.js" async></script>
+    
+
+    
+      <script type="text/javascript">
+        var disqus_config = function () {
+          this.page.url = 'http://www.wangxiyuan.top/2017/10/19/keystone-cache/';
+          this.page.identifier = '2017/10/19/keystone-cache/';
+          this.page.title = 'Keystone的cache机制';
+        };
+        var d = document, s = d.createElement('script');
+        s.src = 'https://wangxiyuan.disqus.com.disqus.com/embed.js';
+        s.setAttribute('data-timestamp', '' + +new Date());
+        (d.head || d.body).appendChild(s);
+      </script>
+    
+
+  
+
+
+
+
+	
+
+
+
+
+
+  
+
+
+
+
+
+
+
+
+  
+
+
+
+
+
+  
+
+  
+  <script src="https://cdn1.lncld.net/static/js/av-core-mini-0.6.4.js"></script>
+  <script>AV.initialize("iI9d8FCxnWpUB4Pai4qhDqTM-gzGzoHsz", "EGTD294MDdVQKJP8VtkEGCyh");</script>
+  <script>
+    function showTime(Counter) {
+      var query = new AV.Query(Counter);
+      var entries = [];
+      var $visitors = $(".leancloud_visitors");
+
+      $visitors.each(function () {
+        entries.push( $(this).attr("id").trim() );
+      });
+
+      query.containedIn('url', entries);
+      query.find()
+        .done(function (results) {
+          var COUNT_CONTAINER_REF = '.leancloud-visitors-count';
+
+          if (results.length === 0) {
+            $visitors.find(COUNT_CONTAINER_REF).text(0);
+            return;
+          }
+
+          for (var i = 0; i < results.length; i++) {
+            var item = results[i];
+            var url = item.get('url');
+            var time = item.get('time');
+            var element = document.getElementById(url);
+
+            $(element).find(COUNT_CONTAINER_REF).text(time);
+          }
+          for(var i = 0; i < entries.length; i++) {
+            var url = entries[i];
+            var element = document.getElementById(url);
+            var countSpan = $(element).find(COUNT_CONTAINER_REF);
+            if( countSpan.text() == '') {
+              countSpan.text(0);
+            }
+          }
+        })
+        .fail(function (object, error) {
+          console.log("Error: " + error.code + " " + error.message);
+        });
+    }
+
+    function addCount(Counter) {
+      var $visitors = $(".leancloud_visitors");
+      var url = $visitors.attr('id').trim();
+      var title = $visitors.attr('data-flag-title').trim();
+      var query = new AV.Query(Counter);
+
+      query.equalTo("url", url);
+      query.find({
+        success: function(results) {
+          if (results.length > 0) {
+            var counter = results[0];
+            counter.fetchWhenSave(true);
+            counter.increment("time");
+            counter.save(null, {
+              success: function(counter) {
+                var $element = $(document.getElementById(url));
+                $element.find('.leancloud-visitors-count').text(counter.get('time'));
+              },
+              error: function(counter, error) {
+                console.log('Failed to save Visitor num, with error message: ' + error.message);
+              }
+            });
+          } else {
+            var newcounter = new Counter();
+            /* Set ACL */
+            var acl = new AV.ACL();
+            acl.setPublicReadAccess(true);
+            acl.setPublicWriteAccess(true);
+            newcounter.setACL(acl);
+            /* End Set ACL */
+            newcounter.set("title", title);
+            newcounter.set("url", url);
+            newcounter.set("time", 1);
+            newcounter.save(null, {
+              success: function(newcounter) {
+                var $element = $(document.getElementById(url));
+                $element.find('.leancloud-visitors-count').text(newcounter.get('time'));
+              },
+              error: function(newcounter, error) {
+                console.log('Failed to create');
+              }
+            });
+          }
+        },
+        error: function(error) {
+          console.log('Error:' + error.code + " " + error.message);
+        }
+      });
+    }
+
+    $(function() {
+      var Counter = AV.Object.extend("Counter");
+      if ($('.leancloud_visitors').length == 1) {
+        addCount(Counter);
+      } else if ($('.post-title-link').length > 1) {
+        showTime(Counter);
+      }
+    });
+  </script>
+
+
+
+  
+<script>
+(function(){
+    var bp = document.createElement('script');
+    var curProtocol = window.location.protocol.split(':')[0];
+    if (curProtocol === 'https') {
+        bp.src = 'https://zz.bdstatic.com/linksubmit/push.js';        
+    }
+    else {
+        bp.src = 'http://push.zhanzhang.baidu.com/push.js';
+    }
+    var s = document.getElementsByTagName("script")[0];
+    s.parentNode.insertBefore(bp, s);
+})();
+</script>
+
+
+  
+
+  
+
+  
+
+  
+
+</body>
+</html>
